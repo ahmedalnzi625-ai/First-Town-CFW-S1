@@ -34,8 +34,8 @@ if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
 
 // ===== إعدادات مستويات التحذير =====
 const warnInfo = {
-  warn_1: { label: 'Warn 1', color: 0xF1C40F, emoji: '🟡', style: ButtonStyle.Secondary },
-  warn_2: { label: 'Warn 2', color: 0xE67E22, emoji: '🟠', style: ButtonStyle.Primary },
+  warn_1: { label: 'Warn 1', color: 0xE74C3C, emoji: '🔴', style: ButtonStyle.Danger },
+  warn_2: { label: 'Warn 2', color: 0xE74C3C, emoji: '🔴', style: ButtonStyle.Danger },
   warn_3: { label: 'Warn 3', color: 0xE74C3C, emoji: '🔴', style: ButtonStyle.Danger }
 };
 
@@ -88,7 +88,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         '**Warn 3** — تحذير ثالث (إجراء نهائي)\n\n' +
         'عند الضغط على أي زر سيُطلب منك إدخال **آيدي الشخص** و**سبب التحذير**، وسيتم منح الرتبة المناسبة تلقائياً.'
       )
-      .setColor(0xF1C40F)
+      .setColor(0xE74C3C)
       .setFooter({ text: 'نظام التحذيرات الآلي' })
       .setTimestamp();
 
