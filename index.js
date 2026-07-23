@@ -12,15 +12,23 @@ const {
 	ModalBuilder,
 	TextInputBuilder,
 	TextInputStyle,
+	REST,
+	Routes,
+	SlashCommandBuilder,
 } = require('discord.js');
 
 const token = process.env.BOT_TOKEN;
-const PREFIX = '!';
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 const warningFile = path.join(__dirname, 'warnings.json');
 const REQUESTS_CHANNEL_ID = process.env.REQUESTS_CHANNEL_ID || process.env.DONE_TEXT_CHANNEL_ID;
 
 if (!token) {
 	console.error('Missing BOT_TOKEN in .env');
+	process.exit(1);
+}
+if (!CLIENT_ID || !GUILD_ID) {
+	console.error('Missing CLIENT_ID or GUILD_ID in .env');
 	process.exit(1);
 }
 
@@ -46,6 +54,7 @@ function isModerator(member) {
 	return member.permissions.has(PermissionsBitField.Flags.ManageMessages);
 }
 
+// ===================== لوحة الـ Panel (3 أزرار Warn حمراء + طلب استقالة) =====================
 function buildPanelMessage() {
 	const embed = new EmbedBuilder()
 		.setColor(0xf59e0b)
@@ -61,14 +70,10 @@ function buildPanelMessage() {
 		.setTimestamp();
 
 	const row = new ActionRowBuilder().addComponents(
-		new ButtonBuilder()
-			.setCustomId('request_leave')
-			.setLabel('Warn')
-			.setStyle(ButtonStyle.Success),
-		new ButtonBuilder()
-			.setCustomId('request_resign')
-			.setLabel('طلب استقالة')
-			.setStyle(ButtonStyle.Danger)
+		new ButtonBuilder().setCustomId('request_warn_1').setLabel('Warn 1').setStyle(ButtonStyle.Danger),
+		new ButtonBuilder().setCustomId('request_warn_2').setLabel('Warn 2').setStyle(ButtonStyle.Danger),
+		new ButtonBuilder().setCustomId('request_warn_3').setLabel('Warn 3').setStyle(ButtonStyle.Danger),
+		new ButtonBuilder().setCustomId('request_resign').setLabel('طلب استقالة').setStyle(ButtonStyle.Danger)
 	);
 
 	return { embeds: [embed], components: [row] };
@@ -97,161 +102,176 @@ function disabledRows(rows) {
 	});
 }
 
+// ===================== تعريف أوامر السلاش =====================
+const commands = [
+	new SlashCommandBuilder().setName('panel').setDescription('نشر لوحة Warn والاستقالة'),
+	new SlashCommandBuilder()
+		.setName('warn')
+		.setDescription('إضافة تحذير لعضو')
+		.addUserOption((opt) => opt.setName('user').setDescription('العضو').setRequired(true))
+		.addStringOption((opt) => opt.setName('reason').setDescription('السبب').setRequired(false)),
+	new SlashCommandBuilder()
+		.setName('warnings')
+		.setDescription('عرض تحذيرات عضو')
+		.addUserOption((opt) => opt.setName('user').setDescription('العضو').setRequired(true)),
+	new SlashCommandBuilder()
+		.setName('unwarn')
+		.setDescription('حذف تحذير من عضو')
+		.addUserOption((opt) => opt.setName('user').setDescription('العضو').setRequired(true))
+		.addIntegerOption((opt) =>
+			opt.setName('index').setDescription('رقم التحذير (اختياري، آخر تحذير افتراضيًا)').setRequired(false)
+		),
+	new SlashCommandBuilder().setName('help').setDescription('عرض قائمة الأوامر'),
+].map((cmd) => cmd.toJSON());
+
+async function registerCommands() {
+	const rest = new REST({ version: '10' }).setToken(token);
+	try {
+		console.log('⏳ يتم تسجيل الأوامر...');
+		await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+		console.log('✅ تم تسجيل الأوامر بنجاح.');
+	} catch (error) {
+		console.error('❌ خطأ أثناء تسجيل الأوامر:', error);
+	}
+}
+
 const client = new Client({
-	intents: [
-		GatewayIntentBits.Guilds,
-		GatewayIntentBits.GuildMessages,
-		GatewayIntentBits.MessageContent,
-	],
+	intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
 });
 
 client.once('clientReady', () => {
 	console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.on('messageCreate', async (message) => {
-	if (message.author.bot || !message.guild) {
-		return;
-	}
+// ===================== معالجة أوامر السلاش =====================
+client.on('interactionCreate', async (interaction) => {
+	if (interaction.isChatInputCommand()) {
+		const { commandName } = interaction;
 
-	if (!message.content.startsWith(PREFIX)) {
-		return;
-	}
-
-	const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
-	const command = args.shift()?.toLowerCase();
-
-	if (command === 'help') {
-		await message.reply(
-			[
-				'**Commands**',
-				'`!panel` - نشر لوحة Warn والاستقالة',
-				'`!warn1 @user reason` - Add a warning',
-				'`!warnings @user` - Show warnings count and history',
-				'`!unwarn @user [index]` - Remove warning by number (last warning if index missing)',
-			].join('\n')
-		);
-		return;
-	}
-
-	if (command === 'panel') {
-		if (!isModerator(message.member)) {
-			await message.reply('تحتاج صلاحية Manage Messages لنشر اللوحة.');
+		if (commandName === 'help') {
+			await interaction.reply({
+				content: [
+					'**الأوامر المتاحة**',
+					'`/panel` - نشر لوحة Warn والاستقالة',
+					'`/warn user reason` - إضافة تحذير',
+					'`/warnings user` - عرض عدد وتفاصيل التحذيرات',
+					'`/unwarn user [index]` - حذف تحذير برقمه (آخر تحذير افتراضيًا)',
+				].join('\n'),
+				ephemeral: true,
+			});
 			return;
 		}
 
-		await message.channel.send(buildPanelMessage());
-		await message.reply('تم نشر لوحة الطلبات.');
-		return;
+		if (commandName === 'panel') {
+			if (!isModerator(interaction.member)) {
+				await interaction.reply({ content: 'تحتاج صلاحية Manage Messages لنشر اللوحة.', ephemeral: true });
+				return;
+			}
+			await interaction.channel.send(buildPanelMessage());
+			await interaction.reply({ content: 'تم نشر لوحة الطلبات.', ephemeral: true });
+			return;
+		}
+
+		if (!isModerator(interaction.member)) {
+			await interaction.reply({ content: 'تحتاج صلاحية Manage Messages لاستخدام أوامر التحذير.', ephemeral: true });
+			return;
+		}
+
+		const data = readWarnings();
+		const guildId = interaction.guild.id;
+		const target = interaction.options.getUser('user');
+
+		if (!data[guildId]) data[guildId] = {};
+		if (!data[guildId][target.id]) data[guildId][target.id] = [];
+
+		if (commandName === 'warn') {
+			const reason = interaction.options.getString('reason') || 'لم يُذكر سبب';
+			const warning = {
+				reason,
+				moderatorId: interaction.user.id,
+				timestamp: new Date().toISOString(),
+			};
+			data[guildId][target.id].push(warning);
+			writeWarnings(data);
+
+			await interaction.reply(
+				`تم تحذير ${target.tag}. إجمالي التحذيرات: ${data[guildId][target.id].length}`
+			);
+			return;
+		}
+
+		if (commandName === 'warnings') {
+			const userWarnings = data[guildId][target.id];
+			if (!userWarnings.length) {
+				await interaction.reply({ content: `${target.tag} ما عنده تحذيرات.`, ephemeral: true });
+				return;
+			}
+			const lines = userWarnings.map((item, index) => {
+				const date = new Date(item.timestamp).toLocaleString();
+				return `${index + 1}. ${item.reason} | المشرف: <@${item.moderatorId}> | ${date}`;
+			});
+			await interaction.reply({
+				content: [`تحذيرات ${target.tag}: (${userWarnings.length})`, ...lines].join('\n'),
+				ephemeral: true,
+			});
+			return;
+		}
+
+		if (commandName === 'unwarn') {
+			const userWarnings = data[guildId][target.id];
+			if (!userWarnings.length) {
+				await interaction.reply({ content: `${target.tag} ما عنده تحذيرات نحذفها.`, ephemeral: true });
+				return;
+			}
+			const possibleIndex = interaction.options.getInteger('index');
+			let removeIndex = userWarnings.length - 1;
+			if (possibleIndex !== null && !Number.isNaN(possibleIndex)) {
+				removeIndex = possibleIndex - 1;
+			}
+			if (removeIndex < 0 || removeIndex >= userWarnings.length) {
+				await interaction.reply({
+					content: `رقم تحذير غير صحيح. استخدم رقم من 1 إلى ${userWarnings.length}.`,
+					ephemeral: true,
+				});
+				return;
+			}
+			const [removed] = userWarnings.splice(removeIndex, 1);
+			writeWarnings(data);
+			await interaction.reply(
+				`تم حذف التحذير رقم ${removeIndex + 1} من ${target.tag}. السبب كان: ${removed.reason}`
+			);
+			return;
+		}
 	}
 
-	if (!['warn1', 'warn', 'warnings', 'unwarn'].includes(command)) {
-		return;
-	}
-
-	if (!isModerator(message.member)) {
-		await message.reply('You need `Manage Messages` permission to use warning commands.');
-		return;
-	}
-
-	const target = message.mentions.users.first();
-	if (!target) {
-		await message.reply('Mention a user first. Example: `!warn @user reason`');
-		return;
-	}
-
-	const data = readWarnings();
-	const guildId = message.guild.id;
-	if (!data[guildId]) {
-		data[guildId] = {};
-	}
-	if (!data[guildId][target.id]) {
-		data[guildId][target.id] = [];
-	}
-
-	if (command === 'warn1' || command === 'warn') {
-		const reason = args.slice(1).join(' ').trim() || 'No reason provided';
-		const warning = {
-			reason,
-			moderatorId: message.author.id,
-			timestamp: new Date().toISOString(),
+	// ===================== أزرار اللوحة =====================
+	if (interaction.isButton()) {
+		const warnButtonLabels = {
+			request_warn_1: 'Warn 1',
+			request_warn_2: 'Warn 2',
+			request_warn_3: 'Warn 3',
 		};
 
-		data[guildId][target.id].push(warning);
-		writeWarnings(data);
+		if (warnButtonLabels[interaction.customId] || interaction.customId === 'request_resign') {
+			const isResign = interaction.customId === 'request_resign';
+			const modalKind = isResign ? 'resign' : interaction.customId; // request_warn_1/2/3
 
-		await message.reply(
-			`${target.tag} was warned. Total warnings: ${data[guildId][target.id].length}`
-		);
-		return;
-	}
-
-	if (command === 'warnings') {
-		const userWarnings = data[guildId][target.id];
-		if (!userWarnings.length) {
-			await message.reply(`${target.tag} has no warnings.`);
-			return;
-		}
-
-		const lines = userWarnings.map((item, index) => {
-			const date = new Date(item.timestamp).toLocaleString();
-			return `${index + 1}. ${item.reason} | Mod: <@${item.moderatorId}> | ${date}`;
-		});
-
-		await message.reply(
-			[`Warnings for ${target.tag}: (${userWarnings.length})`, ...lines].join('\n')
-		);
-		return;
-	}
-
-	if (command === 'unwarn') {
-		const userWarnings = data[guildId][target.id];
-		if (!userWarnings.length) {
-			await message.reply(`${target.tag} has no warnings to remove.`);
-			return;
-		}
-
-		const possibleIndex = Number.parseInt(args[1], 10);
-		let removeIndex = userWarnings.length - 1;
-
-		if (!Number.isNaN(possibleIndex)) {
-			removeIndex = possibleIndex - 1;
-		}
-
-		if (removeIndex < 0 || removeIndex >= userWarnings.length) {
-			await message.reply(`Invalid warning number. Use 1 to ${userWarnings.length}.`);
-			return;
-		}
-
-		const [removed] = userWarnings.splice(removeIndex, 1);
-		writeWarnings(data);
-
-		await message.reply(
-			`Removed warning #${removeIndex + 1} from ${target.tag}. Reason was: ${removed.reason}`
-		);
-	}
-});
-
-client.on('interactionCreate', async (interaction) => {
-	if (interaction.isButton()) {
-		if (interaction.customId === 'request_leave' || interaction.customId === 'request_resign') {
-			const isLeave = interaction.customId === 'request_leave';
 			const modal = new ModalBuilder()
-				.setCustomId(`submit_request|${isLeave ? 'leave' : 'resign'}`)
-				.setTitle(isLeave ? 'نموذج Warn' : 'نموذج طلب استقالة');
+				.setCustomId(`submit_request|${modalKind}`)
+				.setTitle(isResign ? 'نموذج طلب استقالة' : `نموذج ${warnButtonLabels[interaction.customId]}`);
 
 			const reasonInput = new TextInputBuilder()
 				.setCustomId('reason')
-				.setLabel(isLeave ? 'سبب الإجازة' : 'سبب الاستقالة')
+				.setLabel(isResign ? 'سبب الاستقالة' : 'سبب الطلب')
 				.setStyle(TextInputStyle.Paragraph)
 				.setRequired(true)
 				.setMaxLength(500);
 
 			const periodOrDateInput = new TextInputBuilder()
 				.setCustomId('period')
-				.setLabel(isLeave ? 'مدة الإجازة (مثال: 3 أيام)' : 'تاريخ آخر يوم (اختياري)')
+				.setLabel(isResign ? 'تاريخ آخر يوم (اختياري)' : 'مدة الإجازة (مثال: 3 أيام)')
 				.setStyle(TextInputStyle.Short)
-				.setRequired(isLeave)
+				.setRequired(!isResign)
 				.setMaxLength(100);
 
 			modal.addComponents(
@@ -265,10 +285,7 @@ client.on('interactionCreate', async (interaction) => {
 
 		if (interaction.customId.startsWith('request_action|')) {
 			if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
-				await interaction.reply({
-					content: 'لا تملك صلاحية مراجعة الطلبات.',
-					ephemeral: true,
-				});
+				await interaction.reply({ content: 'لا تملك صلاحية مراجعة الطلبات.', ephemeral: true });
 				return;
 			}
 
@@ -282,17 +299,14 @@ client.on('interactionCreate', async (interaction) => {
 			const otherFields = (embed.data.fields || []).filter((field) => field.name !== 'الحالة');
 			embed
 				.setColor(approved ? 0x22c55e : 0xef4444)
-				.setFields(
-					...otherFields,
-					{
-						name: 'الحالة',
-						value: approved ? `✅ تم القبول بواسطة <@${interaction.user.id}>` : `❌ تم الرفض بواسطة <@${interaction.user.id}>`,
-						inline: false,
-					}
-				)
-				.setFooter({
-					text: `تمت المراجعة بواسطة ${interaction.user.tag}`,
-				});
+				.setFields(...otherFields, {
+					name: 'الحالة',
+					value: approved
+						? `✅ تم القبول بواسطة <@${interaction.user.id}>`
+						: `❌ تم الرفض بواسطة <@${interaction.user.id}>`,
+					inline: false,
+				})
+				.setFooter({ text: `تمت المراجعة بواسطة ${interaction.user.tag}` });
 
 			await interaction.update({
 				embeds: [embed],
@@ -312,35 +326,35 @@ client.on('interactionCreate', async (interaction) => {
 		}
 	}
 
+	// ===================== استقبال نموذج (Modal) الطلبات =====================
 	if (interaction.isModalSubmit() && interaction.customId.startsWith('submit_request|')) {
-		const reqType = interaction.customId.split('|')[1];
+		const reqKind = interaction.customId.split('|')[1]; // request_warn_1/2/3 أو resign
+		const isResign = reqKind === 'resign';
 		const reason = interaction.fields.getTextInputValue('reason');
 		const period = interaction.fields.getTextInputValue('period') || 'غير محدد';
 
 		let targetChannel = interaction.channel;
 		if (REQUESTS_CHANNEL_ID) {
-			const maybeChannel = await interaction.guild.channels
-				.fetch(REQUESTS_CHANNEL_ID)
-				.catch(() => null);
+			const maybeChannel = await interaction.guild.channels.fetch(REQUESTS_CHANNEL_ID).catch(() => null);
 			if (maybeChannel && maybeChannel.isTextBased()) {
 				targetChannel = maybeChannel;
 			}
 		}
 
 		const requestKey = interaction.id;
+		const typeLabel = isResign
+			? 'استقالة'
+			: { request_warn_1: 'Warn 1', request_warn_2: 'Warn 2', request_warn_3: 'Warn 3' }[reqKind];
+
 		const reviewEmbed = new EmbedBuilder()
 			.setColor(0xf59e0b)
-			.setTitle(reqType === 'leave' ? '📌 Warn جديد' : '📌 طلب استقالة جديد')
+			.setTitle(isResign ? '📌 طلب استقالة جديد' : `📌 طلب ${typeLabel} جديد`)
 			.addFields(
 				{ name: 'المستخدم', value: `<@${interaction.user.id}>`, inline: true },
 				{ name: 'المعرف', value: interaction.user.id, inline: true },
-				{ name: 'النوع', value: reqType === 'leave' ? 'إجازة' : 'استقالة', inline: true },
+				{ name: 'النوع', value: typeLabel, inline: true },
 				{ name: 'السبب', value: reason },
-				{
-					name: reqType === 'leave' ? 'المدة' : 'آخر يوم',
-					value: period,
-					inline: false,
-				},
+				{ name: isResign ? 'آخر يوم' : 'المدة', value: period, inline: false },
 				{ name: 'الحالة', value: '⏳ بانتظار المراجعة', inline: false }
 			)
 			.setTimestamp();
@@ -357,8 +371,11 @@ client.on('interactionCreate', async (interaction) => {
 	}
 });
 
-client.login(token).catch((error) => {
-	console.error('Failed to login. Check BOT_TOKEN in .env');
-	console.error(error.message);
-	process.exit(1);
-});
+(async () => {
+	await registerCommands();
+	client.login(token).catch((error) => {
+		console.error('Failed to login. Check BOT_TOKEN in .env');
+		console.error(error.message);
+		process.exit(1);
+	});
+})();
