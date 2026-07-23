@@ -1,18 +1,13 @@
 {
-  "name": "ahmed",
+  "name": "warn-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "بوت تحذيرات للإدارة - أزرار Warn 1/2/3 مع منح رتبة تلقائي",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
-    "discord.js": "^14.27.0",
-    "dotenv": "^17.4.2"
+    "discord.js": "^14.15.3"
   }
 }
