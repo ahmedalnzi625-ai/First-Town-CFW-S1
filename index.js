@@ -167,8 +167,7 @@ client.on('interactionCreate', async (interaction) => {
 				await interaction.reply({ content: 'تحتاج صلاحية Manage Messages لنشر اللوحة.', ephemeral: true });
 				return;
 			}
-			await interaction.channel.send(buildPanelMessage());
-			await interaction.reply({ content: 'تم نشر لوحة الطلبات.', ephemeral: true });
+			await interaction.reply(buildPanelMessage());
 			return;
 		}
 
