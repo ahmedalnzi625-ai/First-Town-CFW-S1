@@ -1,221 +1,184 @@
 const {
-	EmbedBuilder,
-	ActionRowBuilder,
-	ButtonBuilder,
-	ButtonStyle,
-	ModalBuilder,
-	TextInputBuilder,
-	TextInputStyle,
-	SlashCommandBuilder,
-	PermissionsBitField,
+  Client,
+  GatewayIntentBits,
+  Events,
+  ActivityType,
+  SlashCommandBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  PermissionFlagsBits,
+  REST,
+  Routes
 } = require('discord.js');
+const config = require('./config.json');
 
-// عرّف هذا المتغير بملف .env حق بوتك (اختياري) عشان الطلبات ترسل لروم معين
-const REQUESTS_CHANNEL_ID = process.env.REQUESTS_CHANNEL_ID || process.env.DONE_TEXT_CHANNEL_ID;
+// ===== إعدادات مستويات التحذير =====
+const warnInfo = {
+  warn_1: { label: 'Warn 1', color: 0xF1C40F, emoji: '🟡', style: ButtonStyle.Secondary },
+  warn_2: { label: 'Warn 2', color: 0xE67E22, emoji: '🟠', style: ButtonStyle.Primary },
+  warn_3: { label: 'Warn 3', color: 0xE74C3C, emoji: '🔴', style: ButtonStyle.Danger }
+};
 
-// ============ تعريف أمر /panel (ضيفه لقائمة أوامرك وقت التسجيل/الـ deploy) ============
-const panelCommandData = new SlashCommandBuilder()
-	.setName('panel')
-	.setDescription('نشر لوحة Warn والاستقالة')
-	.toJSON();
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+});
 
-function isModerator(member) {
-	return member.permissions.has(PermissionsBitField.Flags.ManageMessages);
+// ===== تسجيل الأمر /panel =====
+const commands = [
+  new SlashCommandBuilder()
+    .setName('panel')
+    .setDescription('إرسال لوحة تحذيرات الإدارة (Warn 1 / Warn 2 / Warn 3)')
+    .toJSON()
+];
+
+async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(config.token);
+  try {
+    await rest.put(
+      Routes.applicationGuildCommands(config.clientId, config.guildId),
+      { body: commands }
+    );
+    console.log('✅ تم تسجيل الأمر /panel بنجاح.');
+  } catch (error) {
+    console.error('❌ خطأ أثناء تسجيل الأوامر:', error);
+  }
 }
 
-// ===================== بناء رسالة اللوحة (3 أزرار Warn حمراء + طلب استقالة) =====================
-function buildPanelMessage() {
-	const embed = new EmbedBuilder()
-		.setColor(0xf59e0b)
-		.setTitle('📋 لوحة الإجازات أو الاستقالات')
-		.setDescription(
-			[
-				'تم إنشاء لوحة الطلبات، استخدم الأزرار بالأسفل.',
-				'',
-				'✅ سيتم إشعار الإدارة لمراجعة الطلب.',
-				'⚡ عند قبول الإدارة سيتم تحديث حالة الطلب تلقائيًا.',
-			].join('\n')
-		)
-		.setTimestamp();
+// ===== عند تشغيل البوت =====
+client.once(Events.ClientReady, async () => {
+  console.log(`✅ تم تسجيل الدخول باسم ${client.user.tag}`);
+  client.user.setActivity('إدارة التحذيرات ⚠️', { type: ActivityType.Watching });
+  await registerCommands();
+});
 
-	const row = new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId('request_warn_1').setLabel('Warn 1').setStyle(ButtonStyle.Danger),
-		new ButtonBuilder().setCustomId('request_warn_2').setLabel('Warn 2').setStyle(ButtonStyle.Danger),
-		new ButtonBuilder().setCustomId('request_warn_3').setLabel('Warn 3').setStyle(ButtonStyle.Danger),
-		new ButtonBuilder().setCustomId('request_resign').setLabel('طلب استقالة').setStyle(ButtonStyle.Danger)
-	);
+// ===== التعامل مع كل التفاعلات =====
+client.on(Events.InteractionCreate, async (interaction) => {
+  // 1) تنفيذ /panel
+  if (interaction.isChatInputCommand() && interaction.commandName === 'panel') {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+      return interaction.reply({ content: '❌ ليس لديك صلاحية استخدام هذا الأمر.', ephemeral: true });
+    }
 
-	return { embeds: [embed], components: [row] };
-}
+    const embed = new EmbedBuilder()
+      .setTitle('⚠️ لوحة تحذيرات الإدارة')
+      .setDescription(
+        'اختر مستوى التحذير المناسب من الأزرار بالأسفل.\n\n' +
+        '**Warn 1** — تحذير أول\n' +
+        '**Warn 2** — تحذير ثاني\n' +
+        '**Warn 3** — تحذير ثالث (إجراء نهائي)\n\n' +
+        'عند الضغط على أي زر سيُطلب منك إدخال **آيدي الشخص** و**سبب التحذير**، وسيتم منح الرتبة المناسبة تلقائياً.'
+      )
+      .setColor(0xF1C40F)
+      .setFooter({ text: 'نظام التحذيرات الآلي' })
+      .setTimestamp();
 
-function buildReviewButtons(requesterId, requestKey) {
-	return new ActionRowBuilder().addComponents(
-		new ButtonBuilder()
-			.setCustomId(`request_action|approve|${requesterId}|${requestKey}`)
-			.setLabel('قبول الطلب')
-			.setStyle(ButtonStyle.Success),
-		new ButtonBuilder()
-			.setCustomId(`request_action|reject|${requesterId}|${requestKey}`)
-			.setLabel('رفض الطلب')
-			.setStyle(ButtonStyle.Danger)
-	);
-}
+    const row = new ActionRowBuilder().addComponents(
+      Object.entries(warnInfo).map(([id, info]) =>
+        new ButtonBuilder().setCustomId(id).setLabel(info.label).setStyle(info.style).setEmoji(info.emoji)
+      )
+    );
 
-function disabledRows(rows) {
-	return rows.map((row) => {
-		const nextRow = ActionRowBuilder.from(row);
-		nextRow.components = nextRow.components.map((component) =>
-			ButtonBuilder.from(component).setDisabled(true)
-		);
-		return nextRow;
-	});
-}
+    return interaction.reply({ embeds: [embed], components: [row] });
+  }
 
-/**
- * نادِ هالدالة أول شي جوا الـ interactionCreate حق بوتك الحالي.
- * ترجع true إذا هي اللي عالجت التفاعل (يعني توقف عن أي معالجة ثانية له)،
- * وترجع false إذا التفاعل مالها علاقة باللوحة عشان يكمل بوتك معالجته العادية.
- */
-async function handlePanelInteraction(interaction, client) {
-	// ---------- أمر /panel ----------
-	if (interaction.isChatInputCommand() && interaction.commandName === 'panel') {
-		if (!isModerator(interaction.member)) {
-			await interaction.reply({ content: 'تحتاج صلاحية Manage Messages لنشر اللوحة.', ephemeral: true });
-			return true;
-		}
-		await interaction.reply(buildPanelMessage());
-		return true;
-	}
+  // 2) الضغط على زر Warn -> فتح المودال
+  if (interaction.isButton() && warnInfo[interaction.customId]) {
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+      return interaction.reply({ content: '❌ ليس لديك صلاحية استخدام هذا الزر.', ephemeral: true });
+    }
 
-	// ---------- أزرار اللوحة ----------
-	if (interaction.isButton()) {
-		const warnButtonLabels = {
-			request_warn_1: 'Warn 1',
-			request_warn_2: 'Warn 2',
-			request_warn_3: 'Warn 3',
-		};
+    const level = interaction.customId;
+    const { label } = warnInfo[level];
 
-		if (warnButtonLabels[interaction.customId] || interaction.customId === 'request_resign') {
-			const isResign = interaction.customId === 'request_resign';
-			const modalKind = isResign ? 'resign' : interaction.customId;
+    const modal = new ModalBuilder().setCustomId(`warn_modal_${level}`).setTitle(`تسجيل تحذير - ${label}`);
 
-			const modal = new ModalBuilder()
-				.setCustomId(`submit_request|${modalKind}`)
-				.setTitle(isResign ? 'نموذج طلب استقالة' : `نموذج ${warnButtonLabels[interaction.customId]}`);
+    const userIdInput = new TextInputBuilder()
+      .setCustomId('target_id')
+      .setLabel('آيدي الشخص (User ID)')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('مثال: 123456789012345678')
+      .setRequired(true);
 
-			const reasonInput = new TextInputBuilder()
-				.setCustomId('reason')
-				.setLabel(isResign ? 'سبب الاستقالة' : 'سبب الطلب')
-				.setStyle(TextInputStyle.Paragraph)
-				.setRequired(true)
-				.setMaxLength(500);
+    const reasonInput = new TextInputBuilder()
+      .setCustomId('reason')
+      .setLabel('سبب التحذير')
+      .setStyle(TextInputStyle.Paragraph)
+      .setPlaceholder('اكتب سبب التحذير هنا...')
+      .setRequired(true);
 
-			const periodOrDateInput = new TextInputBuilder()
-				.setCustomId('period')
-				.setLabel(isResign ? 'تاريخ آخر يوم (اختياري)' : 'مدة الإجازة (مثال: 3 أيام)')
-				.setStyle(TextInputStyle.Short)
-				.setRequired(!isResign)
-				.setMaxLength(100);
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(userIdInput),
+      new ActionRowBuilder().addComponents(reasonInput)
+    );
 
-			modal.addComponents(
-				new ActionRowBuilder().addComponents(reasonInput),
-				new ActionRowBuilder().addComponents(periodOrDateInput)
-			);
+    return interaction.showModal(modal);
+  }
 
-			await interaction.showModal(modal);
-			return true;
-		}
+  // 3) استلام المودال -> منح الرتبة وتسجيل التحذير
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('warn_modal_')) {
+    const level = interaction.customId.replace('warn_modal_', '');
+    const { label, color } = warnInfo[level];
+    const roleId = config.warnRoles[level];
 
-		if (interaction.customId.startsWith('request_action|')) {
-			if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
-				await interaction.reply({ content: 'لا تملك صلاحية مراجعة الطلبات.', ephemeral: true });
-				return true;
-			}
+    const targetId = interaction.fields.getTextInputValue('target_id').trim();
+    const reason = interaction.fields.getTextInputValue('reason').trim();
 
-			const parts = interaction.customId.split('|');
-			const action = parts[1];
-			const requesterId = parts[2];
-			const approved = action === 'approve';
+    await interaction.deferReply({ ephemeral: true });
 
-			const oldEmbed = interaction.message.embeds[0];
-			const embed = EmbedBuilder.from(oldEmbed);
-			const otherFields = (embed.data.fields || []).filter((field) => field.name !== 'الحالة');
-			embed
-				.setColor(approved ? 0x22c55e : 0xef4444)
-				.setFields(...otherFields, {
-					name: 'الحالة',
-					value: approved
-						? `✅ تم القبول بواسطة <@${interaction.user.id}>`
-						: `❌ تم الرفض بواسطة <@${interaction.user.id}>`,
-					inline: false,
-				})
-				.setFooter({ text: `تمت المراجعة بواسطة ${interaction.user.tag}` });
+    let member;
+    try {
+      member = await interaction.guild.members.fetch(targetId);
+    } catch {
+      return interaction.editReply({ content: '❌ لم يتم العثور على عضو بهذا الآيدي في السيرفر.' });
+    }
 
-			await interaction.update({
-				embeds: [embed],
-				components: disabledRows(interaction.message.components),
-			});
+    const role = interaction.guild.roles.cache.get(roleId);
+    if (!role) {
+      return interaction.editReply({ content: `❌ لم يتم العثور على رتبة ${label}. تأكد من صحة الآيدي في config.json.` });
+    }
 
-			const requester = await client.users.fetch(requesterId).catch(() => null);
-			if (requester) {
-				requester
-					.send(
-						approved
-							? `تم قبول طلبك في سيرفر ${interaction.guild.name}.`
-							: `تم رفض طلبك في سيرفر ${interaction.guild.name}.`
-					)
-					.catch(() => null);
-			}
-			return true;
-		}
-	}
+    try {
+      await member.roles.add(role, `تحذير ${label} - بواسطة ${interaction.user.tag} - السبب: ${reason}`);
+    } catch (error) {
+      console.error(error);
+      return interaction.editReply({
+        content: '❌ لم أتمكن من إعطاء الرتبة. تأكد أن رتبة البوت أعلى من رتبة التحذير وأن لديه صلاحية "Manage Roles".'
+      });
+    }
 
-	// ---------- استقبال نموذج (Modal) الطلبات ----------
-	if (interaction.isModalSubmit() && interaction.customId.startsWith('submit_request|')) {
-		const reqKind = interaction.customId.split('|')[1]; // request_warn_1/2/3 أو resign
-		const isResign = reqKind === 'resign';
-		const reason = interaction.fields.getTextInputValue('reason');
-		const period = interaction.fields.getTextInputValue('period') || 'غير محدد';
+    const logEmbed = new EmbedBuilder()
+      .setTitle(`⚠️ تم تسجيل تحذير - ${label}`)
+      .addFields(
+        { name: 'العضو', value: `<@${member.id}> (${member.id})`, inline: true },
+        { name: 'بواسطة', value: `<@${interaction.user.id}>`, inline: true },
+        { name: 'السبب', value: reason }
+      )
+      .setColor(color)
+      .setTimestamp();
 
-		let targetChannel = interaction.channel;
-		if (REQUESTS_CHANNEL_ID) {
-			const maybeChannel = await interaction.guild.channels.fetch(REQUESTS_CHANNEL_ID).catch(() => null);
-			if (maybeChannel && maybeChannel.isTextBased()) {
-				targetChannel = maybeChannel;
-			}
-		}
+    await interaction.channel.send({ embeds: [logEmbed] });
 
-		const requestKey = interaction.id;
-		const typeLabel = isResign
-			? 'استقالة'
-			: { request_warn_1: 'Warn 1', request_warn_2: 'Warn 2', request_warn_3: 'Warn 3' }[reqKind];
+    try {
+      await member.send({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle(`⚠️ لقد تلقيت تحذير: ${label}`)
+            .addFields({ name: 'السبب', value: reason })
+            .setColor(color)
+            .setTimestamp()
+        ]
+      });
+    } catch {
+      // العضو مغلق الخاص - يتم تجاهل الخطأ
+    }
 
-		const reviewEmbed = new EmbedBuilder()
-			.setColor(0xf59e0b)
-			.setTitle(isResign ? '📌 طلب استقالة جديد' : `📌 طلب ${typeLabel} جديد`)
-			.addFields(
-				{ name: 'المستخدم', value: `<@${interaction.user.id}>`, inline: true },
-				{ name: 'المعرف', value: interaction.user.id, inline: true },
-				{ name: 'النوع', value: typeLabel, inline: true },
-				{ name: 'السبب', value: reason },
-				{ name: isResign ? 'آخر يوم' : 'المدة', value: period, inline: false },
-				{ name: 'الحالة', value: '⏳ بانتظار المراجعة', inline: false }
-			)
-			.setTimestamp();
+    return interaction.editReply({ content: `✅ تم تسجيل ${label} للعضو <@${member.id}> ومنحه الرتبة بنجاح.` });
+  }
+});
 
-		await targetChannel.send({
-			embeds: [reviewEmbed],
-			components: [buildReviewButtons(interaction.user.id, requestKey)],
-		});
-
-		await interaction.reply({
-			content: 'تم إرسال طلبك للإدارة، انتظر قرار القبول أو الرفض.',
-			ephemeral: true,
-		});
-		return true;
-	}
-
-	return false; // مالها علاقة باللوحة، خلي بوتك يكمل معالجته العادية
-}
-
-module.exports = { panelCommandData, handlePanelInteraction };
+client.login(config.token);
