@@ -15,7 +15,22 @@ const {
   REST,
   Routes
 } = require('discord.js');
-const config = require('./config.json');
+
+// ===== القيم تُقرأ من متغيرات البيئة في لوحة تحكم الاستضافة =====
+const TOKEN = process.env.BOT_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
+
+const WARN_ROLES = {
+  warn_1: process.env.WARN_ROLE_1 || '1529732965171597422',
+  warn_2: process.env.WARN_ROLE_2 || '1529733000185643028',
+  warn_3: process.env.WARN_ROLE_3 || '1529733023271092316'
+};
+
+if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
+  console.error('❌ تأكد من إضافة متغيرات البيئة: BOT_TOKEN, CLIENT_ID, GUILD_ID في لوحة تحكم الاستضافة.');
+  process.exit(1);
+}
 
 // ===== إعدادات مستويات التحذير =====
 const warnInfo = {
@@ -37,10 +52,10 @@ const commands = [
 ];
 
 async function registerCommands() {
-  const rest = new REST({ version: '10' }).setToken(config.token);
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     await rest.put(
-      Routes.applicationGuildCommands(config.clientId, config.guildId),
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
       { body: commands }
     );
     console.log('✅ تم تسجيل الأمر /panel بنجاح.');
@@ -123,7 +138,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isModalSubmit() && interaction.customId.startsWith('warn_modal_')) {
     const level = interaction.customId.replace('warn_modal_', '');
     const { label, color } = warnInfo[level];
-    const roleId = config.warnRoles[level];
+    const roleId = WARN_ROLES[level];
 
     const targetId = interaction.fields.getTextInputValue('target_id').trim();
     const reason = interaction.fields.getTextInputValue('reason').trim();
@@ -139,7 +154,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const role = interaction.guild.roles.cache.get(roleId);
     if (!role) {
-      return interaction.editReply({ content: `❌ لم يتم العثور على رتبة ${label}. تأكد من صحة الآيدي في config.json.` });
+      return interaction.editReply({ content: `❌ لم يتم العثور على رتبة ${label}. تأكد من صحة الآيدي في متغيرات البيئة.` });
     }
 
     try {
@@ -181,4 +196,4 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-client.login(config.token);
+client.login(TOKEN);
